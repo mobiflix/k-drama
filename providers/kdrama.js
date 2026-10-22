@@ -1,4 +1,4 @@
-const BASE_URL = "https://kisskh.ovh";
+const BASE_URL = "https://kisskh.is";
 const ENC_API = "https://enc-dec.app/api/enc-kisskh";
 
 async function request(url, options) {
