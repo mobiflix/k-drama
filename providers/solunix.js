@@ -24,7 +24,7 @@ async function fetchSafe(url, opts = {}) {
         return await fetch(url, {
             ...opts,
             headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+                "User-Agent": USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 ...(opts.headers || {})
@@ -72,25 +72,16 @@ function makeStream(_, title, url, quality, headers, mediaInfo, fallbackQ = "108
 
     const sizeM = t.match(/\[\s*(\d+(?:\.\d+)?\s*[MG]B)\s*\]/i);
     const sizeStr = sizeM ? sizeM[1].trim() : null;
-    const src = /bluray|blu\-ray|bdrip/i.test(t) ? "Blu-ray" : /hdrip|webrip/i.test(t) ? "WEBRip" : "WEB-DL";
-    const imax = /imax/i.test(t) ? " • IMAX" : "";
-    const range = /dolby\s*vision|dovi/i.test(t) ? "Dolby Vision" : /hdr10/i.test(t) ? "HDR10" : /hdr/i.test(t) ? "HDR" : /10bit|10\-bit/i.test(t) ? "10-Bit" : /sdr/i.test(t) ? "SDR" : "";
-    const codec = /hevc|x265|h265/i.test(t) ? "H.265" : "H.264";
-
-    let audio = "AAC";
-    const am = t.match(/(TrueHD\s*7\.1|DDP\s*7\.1|DDP\s*5\.1|DD\s*5\.1|5\.1|AAC)/i);
-    if (am) {
-        audio = am[1].toUpperCase().replace(/\s+/g, "");
-        if (audio === "5.1") audio = "DDP5.1";
-        if (audio.includes("TRUEHD")) audio = "TrueHD 7.1";
-    } else if (/dolby\s*digital|dd/i.test(t)) audio = "Dolby Digital";
-    if (/atmos/i.test(t)) audio += " • Atmos";
+    const src = /bluray|blu\-ray|bdrip/i.test(t) ? "BluRay" : /hdrip|webrip/i.test(t) ? "WEBRip" : "WEB-DL";
+    const range = /dolby\s*vision|dovi/i.test(t) ? "DV" : /hdr10/i.test(t) ? "HDR10" : /hdr/i.test(t) ? "HDR" : /10bit|10\-bit/i.test(t) ? "10-bit" : "SDR";
+    const codec = /hevc|x265|h265/i.test(t) ? "X265" : "X264";
+    const audio = /atmos/i.test(t) ? "AUDIO ATMOS" : /ddp\s*5\.1|dd\s*5\.1/i.test(t) ? "AUDIO 5.1" : /aac/i.test(t) ? "AUDIO AAC" : "AUDIO 2.0";
 
     // Host detection — HubCloud / vCloud ONLY
     const lUrl = url.toLowerCase();
     let host = "";
-    if (lUrl.includes("hubcloud") || lUrl.includes("/hub2/") || lUrl.includes("homelander.buzz") || lUrl.includes("whistle.lat") || lUrl.includes("mandalorian.buzz")) host = "HubCloud";
-    else if (lUrl.includes("vcloud") || lUrl.includes(".r2.dev")) host = "vCloud";
+    if (lUrl.includes("hubcloud") || lUrl.includes("/hub2/") || lUrl.includes("homelander.buzz") || lUrl.includes("whistle.lat") || lUrl.includes("mandalorian.buzz")) host = "HUBCLOUD";
+    else if (lUrl.includes("vcloud") || lUrl.includes(".r2.dev")) host = "VCLOUD";
     else return null;
 
     // size in MB for sorting
@@ -103,19 +94,21 @@ function makeStream(_, title, url, quality, headers, mediaInfo, fallbackQ = "108
     })();
 
     const sortTag = getSortTag(2);
-    const shortLabel = `VegaMovies • ${nq.toUpperCase()}${imax} • ${host}`;
-    const detailLine1 = `${langs}${sizeStr ? " • " + sizeStr : ""}`;
-    const detailLine2 = `${src} • ${audio}${range ? " • " + range : ""} • ${codec}`;
+    
+    // UI Format matching the screenshot
+    const displayName = `${host} | 1080P | 🌱 100`;
+    const detailLine1 = `${mediaInfo ? mediaInfo + "\n" : ""}${src} • ${range} • ${codec} • ${audio}`;
+    const detailLine2 = `🌱 100 | 💾 ${sizeStr || "Unknown"} | 🔗 ${host}`;
 
     const stream = {
-        name: sortTag + shortLabel,
-        title: sortTag + shortLabel,
-        quality: nq + " \u2022 " + detailLine1 + "\n" + detailLine2,
+        name: sortTag + displayName,
+        title: sortTag + displayName,
+        quality: `${detailLine1}\n${detailLine2}`,
         language: langs,
         url,
         headers: headers || { "Referer": BASE_URL + "/" }
     };
-    streamMeta.set(stream, { host, size: sizeStr ? sizeStr.replace(/\s+/g, "").toUpperCase() : "", sizeBytes });
+    streamMeta.set(stream, { host: host === "HUBCLOUD" ? "HubCloud" : "vCloud", size: sizeStr ? sizeStr.replace(/\s+/g, "").toUpperCase() : "", sizeBytes });
     return stream;
 }
 
@@ -132,7 +125,7 @@ const dedupeBySize = streams => {
 };
 
 const dedupe = streams => { const s = new Set(); return (streams || []).filter(x => x && x.url && !s.has(x.url) && s.add(x.url)); };
-const isHubVc = s => { if (!s || !s.url) return false; const l = s.url.toLowerCase(); return l.includes("hubcloud") || l.includes("vcloud") || l.includes("/hub2/") || l.includes("homelander.buzz") || l.includes("whistle.lat") || l.includes("mandalorian.buzz") || l.includes(".r2.dev") || (s.name && (s.name.includes("HubCloud") || s.name.includes("vCloud"))); };
+const isHubVc = s => { if (!s || !s.url) return false; const l = s.url.toLowerCase(); return l.includes("hubcloud") || l.includes("vcloud") || l.includes("/hub2/") || l.includes("homelander.buzz") || l.includes("whistle.lat") || l.includes("mandalorian.buzz") || l.includes(".r2.dev") || (s.name && (s.name.includes("HUBCLOUD") || s.name.includes("VCLOUD"))); };
 
 function isStrictMatch(reqTitle, reqYear, scrTitle, scrYear, alts = []) {
     if (!scrTitle) return false;
@@ -607,7 +600,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         if (!best || !best.postId) return [];
 
         const post = await fetchPostContent(best.postId, best.permalink);
-        if (!post) return [];
+        if (!post) return null;
 
         const streams = await extractFromPost(post, post.title || best.title, isTv, season != null ? Number(season) : null, episode != null ? Number(episode) : null, mediaYear);
         const seen = new Set();
