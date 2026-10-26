@@ -55,14 +55,21 @@ const fetchHtml = async (url, opts = {}) => {
     }
 };
 
-let count1080p = 0;
+const streamMeta = new WeakMap();
 
-function makeStream(_, title, url, quality, headers, mediaInfo, fallbackQ = "HD") {
+function makeStream(_, title, url, quality, headers, mediaInfo, fallbackQ = "1080p") {
     if (!url || !url.startsWith("https://")) return null;
-    const nq = [quality, fallbackQ].find(q => ["2160p", "1440p", "1080p"].includes(q));
-    if (!nq || (nq === "1080p" && count1080p >= 4)) return null;
+
+    // 1080p ONLY
+    const nq = (quality === "1080p" || fallbackQ === "1080p") ? "1080p" : null;
+    if (!nq) return null;
 
     const t = (title || "").replace(/&#8211;|&#8212;|&ndash;|&mdash;/g, "-").replace(/&#038;|&amp;/g, "&").replace(/&#8217;/g, "'").replace(/&quot;/g, "\"").replace(/[\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+
+    // ENGLISH ONLY — reject any non-English markers
+    if (/hindi|hin\b|tamil|telugu|malayalam|kannada|punjabi|urdu|bengali|gujarati|marathi|korean|japanese|chinese|spanish|arabic|french|german|dual\s*audio|multi\s*audio|dubbed/i.test(t)) return null;
+    const langs = "English";
+
     const sizeM = t.match(/\[\s*(\d+(?:\.\d+)?\s*[MG]B)\s*\]/i);
     const sizeStr = sizeM ? sizeM[1].trim() : null;
     const src = /bluray|blu\-ray|bdrip/i.test(t) ? "Blu-ray" : /hdrip|webrip/i.test(t) ? "WEBRip" : "WEB-DL";
@@ -79,14 +86,24 @@ function makeStream(_, title, url, quality, headers, mediaInfo, fallbackQ = "HD"
     } else if (/dolby\s*digital|dd/i.test(t)) audio = "Dolby Digital";
     if (/atmos/i.test(t)) audio += " • Atmos";
 
-    const langs = /dual|hindi\-eng|eng\-hin/i.test(t) ? "English • Hindi" : ([/english|eng/i.test(t) && "English", /hindi|hin/i.test(t) && "Hindi"].filter(Boolean).join(" • ") || "English");
+    // Host detection — HubCloud / vCloud ONLY
     const lUrl = url.toLowerCase();
-    const host = (lUrl.includes("hubcloud") || lUrl.includes("/hub2/") || lUrl.includes("homelander.buzz") || lUrl.includes("whistle.lat") || lUrl.includes("mandalorian.buzz")) ? "HubCloud" : (lUrl.includes(".r2.dev") || lUrl.includes("vcloud")) ? "vCloud" : lUrl.includes("pixeldrain") ? "PixelDrain" : "";
+    let host = "";
+    if (lUrl.includes("hubcloud") || lUrl.includes("/hub2/") || lUrl.includes("homelander.buzz") || lUrl.includes("whistle.lat") || lUrl.includes("mandalorian.buzz")) host = "HubCloud";
+    else if (lUrl.includes("vcloud") || lUrl.includes(".r2.dev")) host = "vCloud";
+    else return null;
 
-    if (nq === "1080p") count1080p++;
+    // size in MB for sorting
+    const sizeBytes = (() => {
+        if (!sizeStr) return Infinity;
+        const m = sizeStr.match(/([\d.]+)\s*(GB|MB)/i);
+        if (!m) return Infinity;
+        const n = parseFloat(m[1]);
+        return m[2].toUpperCase() === "GB" ? n * 1024 : n;
+    })();
 
-    const sortTag = getSortTag({ "2160p": 4, "1440p": 3, "1080p": 2 }[nq]);
-    const shortLabel = `VegaMovies • ${nq.toUpperCase()}${imax}${host ? " • " + host : ""}`;
+    const sortTag = getSortTag(2);
+    const shortLabel = `VegaMovies • ${nq.toUpperCase()}${imax} • ${host}`;
     const detailLine1 = `${langs}${sizeStr ? " • " + sizeStr : ""}`;
     const detailLine2 = `${src} • ${audio}${range ? " • " + range : ""} • ${codec}`;
 
@@ -98,11 +115,10 @@ function makeStream(_, title, url, quality, headers, mediaInfo, fallbackQ = "HD"
         url,
         headers: headers || { "Referer": BASE_URL + "/" }
     };
-    streamMeta.set(stream, { host: host || shortLabel, size: sizeStr ? sizeStr.replace(/\s+/g, "").toUpperCase() : "" });
+    streamMeta.set(stream, { host, size: sizeStr ? sizeStr.replace(/\s+/g, "").toUpperCase() : "", sizeBytes });
     return stream;
 }
 
-const streamMeta = new WeakMap();
 const dedupeBySize = streams => {
     const seen = new Set();
     return (streams || []).filter(x => {
@@ -190,7 +206,7 @@ function extractNexdriveLinks(html) {
             if (last) { const pm = last.match(/(2160|1080|720|480|1440)\s*P/i); quality = pm ? pm[1] + "p" : /4K|UHD/i.test(last) ? "2160p" : /1440|2K/i.test(last) ? "1440p" : "HD"; }
             if (!quality || quality === "HD") { const hq = before.match(/<(?:h[1-6]|strong|b)[^>]*>[^<]*?(\d{3,4}p|4K|UHD)[^<]*?<\//i); if (hq) { const pm = hq[1].match(/(2160|1080|720|480|1440)\s*P/i); quality = pm ? pm[1] + "p" : /4K|UHD/i.test(hq[1]) ? "2160p" : /1440|2K/i.test(hq[1]) ? "1440p" : "HD"; } }
         }
-        if (["2160p", "1440p", "1080p"].includes(quality)) links.push({ href, quality, label });
+        if (quality === "1080p") links.push({ href, quality, label });
     });
     return links;
 }
@@ -232,8 +248,7 @@ async function extractSingleVc(vcUrl, referer, targetSeason, targetEp, label, fa
     }
 
     const headerText = $("div.card-header").text() || "";
-    const qm = headerText.match(/(2160|1080|720|480|1440)\s*P/i);
-    const quality = qm ? qm[1] + "p" : /4K|UHD/i.test(headerText) ? "2160p" : /1440|2K/i.test(headerText) ? "1440p" : "HD";
+    const quality = "1080p"; // force 1080p
     const tasks = [];
     const synced = href => href.includes("?") ? href + "&s=" + (1 + new Date().getMinutes()) : href + "?s=" + (1 + new Date().getMinutes());
 
@@ -242,7 +257,7 @@ async function extractSingleVc(vcUrl, referer, targetSeason, targetEp, label, fa
     let bridgeUrl = varAtob ? (function () { try { return atob(atob(varAtob[1])); } catch (e) { return varAtob[1]; } })() : varUrl ? varUrl[1] : "";
 
     if (bridgeUrl && bridgeUrl.includes(".workers.dev") && bridgeUrl.startsWith("https://")) {
-        tasks.push(() => streams.push(makeStream("Worker", (label || "Worker") + " [" + headerText + "]", synced(bridgeUrl), quality, { "Referer": newUrl }, mediaInfo, fallbackQ)));
+        tasks.push(() => streams.push(makeStream("Worker", (label || "Worker") + " [" + headerText + "]", synced(bridgeUrl), quality, { "Referer": newUrl }, mediaInfo, "1080p")));
         bridgeUrl = "";
     }
 
@@ -250,9 +265,9 @@ async function extractSingleVc(vcUrl, referer, targetSeason, targetEp, label, fa
     $("a.btn, a").each((_, el) => {
         const href = $(el).attr("href") || "", text = ($(el).text() || "").trim(), lt = text.toLowerCase();
         if (!href || href === "#" || !href.startsWith("https://") || href.toLowerCase().includes(".zip") || skipBtn(lt)) return;
-        if (lt.includes("fslv2")) tasks.push(() => streams.push(makeStream("FSLv2", (label || text) + " [" + headerText + "]", href, quality, { "Referer": newUrl }, mediaInfo, fallbackQ)));
-        else if (lt.includes("fsl")) tasks.push(() => streams.push(makeStream("FSL", (label || text) + " [" + headerText + "]", synced(href), quality, { "Referer": newUrl }, mediaInfo, fallbackQ)));
-        else if (lt.includes("worker")) tasks.push(() => streams.push(makeStream("Worker", (label || text) + " [" + headerText + "]", synced(href), quality, { "Referer": newUrl }, mediaInfo, fallbackQ)));
+        if (lt.includes("fslv2")) tasks.push(() => streams.push(makeStream("FSLv2", (label || text) + " [" + headerText + "]", href, quality, { "Referer": newUrl }, mediaInfo, "1080p")));
+        else if (lt.includes("fsl")) tasks.push(() => streams.push(makeStream("FSL", (label || text) + " [" + headerText + "]", synced(href), quality, { "Referer": newUrl }, mediaInfo, "1080p")));
+        else if (lt.includes("worker")) tasks.push(() => streams.push(makeStream("Worker", (label || text) + " [" + headerText + "]", synced(href), quality, { "Referer": newUrl }, mediaInfo, "1080p")));
     });
 
     if (tasks.length) { tasks.forEach(fn => fn()); return streams; }
@@ -271,21 +286,21 @@ async function extractSingleVc(vcUrl, referer, targetSeason, targetEp, label, fa
 
     const $b = await fetchHtml(bridgeUrl, { headers: { "User-Agent": MOBILE_UAS[Math.floor(Math.random() * MOBILE_UAS.length)], "Accept": "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9", "Referer": newUrl, "Cookie": "xla=s4t" } });
     if (!$b) return streams;
-    const bHeader = $b("div.card-header").text() || "", bm = bHeader.match(/(2160|1080|720|480|1440)\s*P/i), bQ = bm ? bm[1] + "p" : /4K|UHD/i.test(bHeader) ? "2160p" : /1440|2K/i.test(bHeader) ? "1440p" : "HD";
+    const bHeader = $b("div.card-header").text() || "", bQ = "1080p";
     const bVar = $b.html().match(/var\s+url\s*=\s*['"]([^'"]+)['"]/);
     if (bVar && bVar[1] && bVar[1].includes(".workers.dev") && bVar[1].startsWith("https://"))
-        tasks.push(() => streams.push(makeStream("Worker", (label || "Worker") + " [" + bHeader + "]", synced(bVar[1]), bQ, { "Referer": bridgeUrl }, mediaInfo, fallbackQ)));
+        tasks.push(() => streams.push(makeStream("Worker", (label || "Worker") + " [" + bHeader + "]", synced(bVar[1]), bQ, { "Referer": bridgeUrl }, mediaInfo, "1080p")));
 
     $b("a.btn, a").each((_, el) => {
         const href = $b(el).attr("href") || "", text = ($b(el).text() || "").trim(), lt = text.toLowerCase();
         if (!href || href === "#" || !href.startsWith("https://") || href.toLowerCase().includes(".zip") || skipBtn(lt)) return;
-        if (lt.includes("fslv2")) tasks.push(() => streams.push(makeStream("FSLv2", (label || text) + " [" + bHeader + "]", href, bQ, { "Referer": bridgeUrl }, mediaInfo, fallbackQ)));
-        else if (lt.includes("fsl")) tasks.push(() => streams.push(makeStream("FSL", (label || text) + " [" + bHeader + "]", synced(href), quality, { "Referer": bridgeUrl }, mediaInfo, fallbackQ)));
+        if (lt.includes("fslv2")) tasks.push(() => streams.push(makeStream("FSLv2", (label || text) + " [" + bHeader + "]", href, bQ, { "Referer": bridgeUrl }, mediaInfo, "1080p")));
+        else if (lt.includes("fsl")) tasks.push(() => streams.push(makeStream("FSL", (label || text) + " [" + bHeader + "]", synced(href), quality, { "Referer": bridgeUrl }, mediaInfo, "1080p")));
     });
 
     if (!tasks.length) {
         const fsl = $b("#fsl").attr("href");
-        if (fsl && fsl.startsWith("https://")) tasks.push(() => streams.push(makeStream("FSL", (label || "FSL") + " [" + headerText + "]", synced(fsl), quality, { "Referer": bridgeUrl }, mediaInfo, fallbackQ)));
+        if (fsl && fsl.startsWith("https://")) tasks.push(() => streams.push(makeStream("FSL", (label || "FSL") + " [" + headerText + "]", synced(fsl), quality, { "Referer": bridgeUrl }, mediaInfo, "1080p")));
     }
     tasks.forEach(fn => fn());
     return streams;
@@ -360,14 +375,13 @@ const hiQuality = text => {
     const q = m[1] ? m[1].toLowerCase() : "4k";
     return q === "4k" ? "2160p" : q;
 };
-const hiAllowedQ = q => q === "2160p" || q === "1080p";
+const hiAllowedQ = q => q === "1080p";
 const hiSize = text => { const m = String(text || "").match(/([\d.]+)\s*(GB|MB)/i); return m ? m[1] + m[2].toUpperCase() : ""; };
 const hiLang = text => {
     const s = String(text || "").toLowerCase();
     return ["hindi", "punjabi", "urdu", "tamil", "telugu", "marathi", "kannada", "malayalam", "bengali", "gujarati", "english", "korean", "japanese", "chinese", "spanish", "arabic"].filter(l => s.includes(l)).join("-");
 };
 const hiLangLabel = lang => lang ? lang.split("-").map(p => p.charAt(0).toUpperCase() + p.slice(1)).join("-") : "";
-const hiLangTier = lang => !lang ? 3 : lang.includes("hindi") ? 0 : (lang.includes("punjabi") || lang.includes("urdu")) ? 1 : lang.includes("english") ? 4 : 2;
 
 function hiQueryParam(url, key) {
     const qi = url.indexOf("?");
@@ -510,30 +524,45 @@ async function getHicineStreams(title, year, mediaType, season, episode, mediaIn
         const ep = hiParseEpisodes(seasonText).find(e => e.num === Number(episode));
         if (!ep) return [];
         const seasonLang = hiLang((seasonText.split(/\r?\n/)[0]) || "");
-        ep.variants.forEach(v => targets.push({ workerUrl: v.url, quality: v.quality, size: "", lang: seasonLang }));
+        ep.variants.forEach(v => {
+            if (seasonLang && !seasonLang.toLowerCase().includes("english")) return;
+            targets.push({ workerUrl: v.url, quality: v.quality, size: "", lang: seasonLang });
+        });
     } else {
-        hiParseMovieLinks(det.links).forEach(l => targets.push(l));
+        hiParseMovieLinks(det.links).forEach(l => {
+            if (l.lang && !l.lang.toLowerCase().includes("english")) return;
+            targets.push(l);
+        });
     }
     if (!targets.length) return [];
-
-    const qRank = { "2160p": 5, "1080p": 3 };
-    targets.sort((a, b) => (hiLangTier(a.lang || "") - hiLangTier(b.lang || "")) || ((qRank[b.quality] || 0) - (qRank[a.quality] || 0)));
 
     const results = new Array(targets.length);
     let cursor = 0;
     const runner = async () => {
         while (cursor < targets.length) {
             const idx = cursor++, t = targets[idx];
-            results[idx] = await hiResolveSafe(t.workerUrl, t.quality, t.size, t.lang);
+            results[idx] = await hiResolveSafe(t.workerUrl, "1080p", t.size, t.lang);
         }
     };
     await Promise.all(Array.from({ length: Math.min(2, targets.length) }, runner));
 
     const raws = dedupe(results.flat().filter(Boolean));
-    return dedupeBySize(raws.map(r => {
+    const built = raws.map(r => {
         const t = [hiLangLabel(r.lang), r.quality, r.size ? "[" + r.size + "]" : ""].filter(Boolean).join(" ");
-        return makeStream("HiCine", t, r.url, r.quality, { "User-Agent": USER_AGENT }, mediaInfo, "HD");
-    }).filter(Boolean));
+        return makeStream("HiCine", t, r.url, "1080p", { "User-Agent": USER_AGENT }, mediaInfo, "1080p");
+    }).filter(Boolean);
+
+    return pickOnePerHost(built);
+}
+
+function pickOnePerHost(streams) {
+    const pickLowest = (hostName) => {
+        const list = streams.filter(s => streamMeta.get(s)?.host === hostName);
+        if (!list.length) return null;
+        list.sort((a, b) => (streamMeta.get(a)?.sizeBytes ?? Infinity) - (streamMeta.get(b)?.sizeBytes ?? Infinity));
+        return list[0];
+    };
+    return [pickLowest("HubCloud"), pickLowest("vCloud")].filter(Boolean);
 }
 
 async function onSettings() {
@@ -582,7 +611,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         const streams = await extractFromPost(post, post.title || best.title, isTv, season != null ? Number(season) : null, episode != null ? Number(episode) : null, mediaYear);
         const seen = new Set();
-        return dedupeBySize(streams.filter(s => s && s.url && !seen.has(s.url) && seen.add(s.url)).filter(isHubVc));
+        const cleaned = streams
+            .filter(s => s && s.url && !seen.has(s.url) && seen.add(s.url))
+            .filter(isHubVc);
+
+        return pickOnePerHost(cleaned);
     } catch (e) {
         return [];
     }
